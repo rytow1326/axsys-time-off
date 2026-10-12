@@ -5,7 +5,8 @@
 "use strict";
 
 const cfg = window.AXSYS_CONFIG || {};
-const desktop = window.desktop || { notify() {}, setBadge() {}, version: async () => "dev", onUpdateReady() {}, installUpdate() {} };
+// Named "shell" because Electron already defines a global called "desktop" (from preload.js).
+const shell = window.desktop || { notify() {}, setBadge() {}, version: async () => "dev", onUpdateReady() {}, installUpdate() {} };
 const sb = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, storageKey: "axsys-timeoff-auth" },
 });
@@ -70,7 +71,7 @@ function openModal({ title, body, footer }) {
 
 /* ---------- auth ---------- */
 async function init() {
-  $("#version").textContent = `v${await desktop.version()}`;
+  $("#version").textContent = `v${await shell.version()}`;
   if (!cfg.SUPABASE_URL || cfg.SUPABASE_URL.includes("YOUR-PROJECT")) {
     document.body.innerHTML = `<div style="padding:40px"><h2>Setup needed</h2><p>This build is missing its server settings (renderer/config.js). Contact your administrator.</p></div>`;
     return;
@@ -84,8 +85,8 @@ async function init() {
   $("#menu-signout").onclick = () => sb.auth.signOut();
   $("#menu-account").onclick = accountDialog;
   $$("#tabs button").forEach((b) => (b.onclick = () => { S.tab = b.dataset.tab; $$("#tabs button").forEach((x) => x.classList.toggle("on", x === b)); renderList(); }));
-  desktop.onUpdateReady(() => ($("#update-banner").hidden = false));
-  $("#install-update").onclick = () => desktop.installUpdate();
+  shell.onUpdateReady(() => ($("#update-banner").hidden = false));
+  $("#install-update").onclick = () => shell.installUpdate();
 
   sb.auth.onAuthStateChange((event) => { if (event === "SIGNED_OUT") showLogin(); });
   const { data: { session } } = await sb.auth.getSession();
@@ -104,7 +105,7 @@ function showLogin(msg) {
   $("#login-view").hidden = false;
   $("#login-error").hidden = !msg;
   $("#login-error").textContent = msg || "";
-  desktop.setBadge(0);
+  shell.setBadge(0);
 }
 
 async function onLogin(e) {
@@ -167,7 +168,7 @@ function subscribe() {
       refreshTimer = setTimeout(refresh, 300);
     })
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${S.me.id}` }, (p) => {
-      desktop.notify(p.new.title, p.new.body);
+      shell.notify(p.new.title, p.new.body);
       toast(p.new.body);
       clearTimeout(refreshTimer);
       refreshTimer = setTimeout(refresh, 300);
@@ -197,7 +198,7 @@ function render() {
   const unread = S.notifs.filter((n) => !n.read_at).length;
   $("#bell-count").hidden = !unread;
   $("#bell-count").textContent = unread;
-  desktop.setBadge(unread);
+  shell.setBadge(unread);
   renderList();
   if (!$("#drawer").hidden) renderDrawer();
 }
@@ -329,7 +330,7 @@ function openDrawer() {
     sb.from("notifications").update({ read_at: new Date().toISOString() }).in("id", unread).then(() => {
       S.notifs.forEach((n) => { if (unread.includes(n.id)) n.read_at = n.read_at || "now"; });
       $("#bell-count").hidden = true;
-      desktop.setBadge(0);
+      shell.setBadge(0);
     });
   }
 }
