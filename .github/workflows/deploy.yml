@@ -1,0 +1,160 @@
+# ONE BUTTON: sets up the database + email, publishes the manager portal, and
+# builds the Windows installer. Run it from the Actions tab → "Deploy" → Run workflow.
+# Run it again any time you change something — it's safe to repeat.
+#
+# Repository secrets needed (Settings → Secrets and variables → Actions):
+#   SUPABASE_ACCESS_TOKEN   supabase.com → Account → Access Tokens → Generate
+#   SUPABASE_PROJECT_REF    the code in your project's URL, e.g. abcdefghijklmnop
+#   MANAGER_PASSWORD        password for your manager login (first run only, 10+ chars)
+#   RESEND_API_KEY          optional — turns on email (resend.com → API Keys)
+#   EMAIL_FROM              optional — e.g. "Axsys Time Off <timeoff@axsysinc.com>" once the domain is verified in Resend
+
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      manager_email:
+        description: Manager email (receives request emails, gets the first login)
+        default: ryant@axsysinc.com
+      manager_name:
+        description: Manager's full name
+        default: Ryan T
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  backend:
+    name: Database, email & accounts
+    runs-on: ubuntu-latest
+    outputs:
+      url: ${{ steps.setup.outputs.url }}
+      anon_key: ${{ steps.setup.outputs.anon_key }}
+      portal_url: ${{ steps.portal.outputs.portal_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check secrets
+        env:
+          T: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          R: ${{ secrets.SUPABASE_PROJECT_REF }}
+        run: |
+          [ -n "$T" ] || { echo "::error::Add the SUPABASE_ACCESS_TOKEN secret (see the top of deploy.yml)"; exit 1; }
+          [ -n "$R" ] || { echo "::error::Add the SUPABASE_PROJECT_REF secret (see the top of deploy.yml)"; exit 1; }
+
+      - name: Work out the portal address
+        id: portal
+        run: |
+          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "portal_url=https://${owner}.github.io/${{ github.event.repository.name }}" >> "$GITHUB_OUTPUT"
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Set up Supabase
+        id: setup
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+          MANAGER_PASSWORD: ${{ secrets.MANAGER_PASSWORD }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          MANAGER_EMAIL: ${{ inputs.manager_email }}
+          MANAGER_NAME: ${{ inputs.manager_name }}
+          PORTAL_URL: ${{ steps.portal.outputs.portal_url }}
+        run: bash deploy/deploy-backend.sh
+
+  portal:
+    name: Manager portal
+    needs: backend
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Write settings
+        run: |
+          cat > manager-portal/config.js <<EOF
+          window.AXSYS_CONFIG = {
+            SUPABASE_URL: "${{ needs.backend.outputs.url }}",
+            SUPABASE_ANON_KEY: "${{ needs.backend.outputs.anon_key }}",
+          };
+          EOF
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: manager-portal
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+  app:
+    name: Windows installer
+    needs: backend
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: employee-app
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Write settings
+        run: |
+          @"
+          window.AXSYS_CONFIG = {
+            SUPABASE_URL: "${{ needs.backend.outputs.url }}",
+            SUPABASE_ANON_KEY: "${{ needs.backend.outputs.anon_key }}",
+          };
+          "@ | Set-Content -Encoding utf8 renderer/config.js
+          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+          $pkg.build.publish[0].owner = "${{ github.repository_owner }}"
+          $pkg.build.publish[0].repo = "${{ github.event.repository.name }}"
+          $pkg | ConvertTo-Json -Depth 20 | Set-Content -Encoding utf8 package.json
+          "VERSION=$($pkg.version)" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+      - run: npm install
+      - run: npx electron-builder --win nsis --x64 --publish never
+
+      - name: Publish download
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION }}
+          name: Axsys Time Off ${{ env.VERSION }}
+          make_latest: true
+          body: |
+            Download **Axsys-Time-Off-Setup-${{ env.VERSION }}.exe** below and run it.
+            Windows may say the publisher is unknown — click **More info → Run anyway**.
+          files: |
+            employee-app/dist/*.exe
+            employee-app/dist/*.blockmap
+            employee-app/dist/latest.yml
+
+  summary:
+    name: Links
+    needs: [backend, portal, app]
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## ✅ Axsys Time Off is live
+
+          | | |
+          |---|---|
+          | **Manager portal** | ${{ needs.backend.outputs.portal_url }} |
+          | **Employee installer** (send this link to staff) | https://github.com/${{ github.repository }}/releases/latest |
+          | **Manager login** | ${{ inputs.manager_email }} (password = your MANAGER_PASSWORD secret) |
+
+          Next: sign in to the portal → **Employees → Add employee** for each person.
+          EOF
