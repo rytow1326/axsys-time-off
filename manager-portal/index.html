@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://*.supabase.co wss://*.supabase.co; base-uri 'self'; form-action 'self'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Axsys Time Off — Manager Portal</title>
   <link rel="icon" href="assets/logo.svg">
@@ -41,7 +42,7 @@
       <a href="#/dashboard" data-route="dashboard"><span class="ico">◧</span>Dashboard<span class="pill" id="nav-pending" hidden></span></a>
       <a href="#/requests"  data-route="requests"><span class="ico">☰</span>Requests &amp; absences</a>
       <a href="#/calendar"  data-route="calendar"><span class="ico">▦</span>Calendar</a>
-      <a href="#/employees" data-route="employees"><span class="ico">◉</span>Employees</a>
+      <a href="#/employees" data-route="employees"><span class="ico">◉</span>Employees<span class="pill" id="nav-signups" hidden></span></a>
       <a href="#/activity"  data-route="activity"><span class="ico">↻</span>Activity log</a>
     </nav>
     <div class="side-foot">

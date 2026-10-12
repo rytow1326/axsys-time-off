@@ -1,5 +1,5 @@
 // Axsys Time Off — manager-only account administration
-// Actions: create | reset_password | set_active
+// Actions: create | reset_password | set_active | reject_signup
 // The caller must be signed in as an active manager. Uses the service role
 // (server side only) to manage logins in Supabase Auth.
 
@@ -39,18 +39,22 @@ Deno.serve(async (req) => {
     switch (body.action) {
       case "create": {
         const email = String(body.email ?? "").trim().toLowerCase();
-        const full_name = String(body.full_name ?? "").trim();
+        const first_name = String(body.first_name ?? "").trim();
+        const last_name = String(body.last_name ?? "").trim();
+        const full_name = `${first_name} ${last_name}`.trim();
         const password = String(body.password ?? "");
-        if (!email.includes("@") || !full_name) return json({ error: "Name and a valid email are required" }, 400);
+        if (!email.includes("@") || !first_name || !last_name) return json({ error: "First name, last name and a valid email are required" }, 400);
         if (password.length < MIN_PASSWORD) return json({ error: `Password must be at least ${MIN_PASSWORD} characters` }, 400);
 
         const { data, error } = await admin.auth.admin.createUser({
-          email, password, email_confirm: true, user_metadata: { full_name },
+          email, password, email_confirm: true,
+          user_metadata: { first_name, last_name, full_name },
+          app_metadata: { created_by_manager: true },
         });
-        if (error) return json({ error: error.message }, 400);
+        if (error) return json({ error: /database error/i.test(error.message) ? "That email can't be used — accounts must use the company email domain." : error.message }, 400);
 
         const { error: pErr } = await admin.from("profiles").update({
-          full_name,
+          full_name, first_name, last_name, approved: true,
           role: body.role === "manager" ? "manager" : "employee",
           annual_allowance: Number(body.annual_allowance ?? 10),
         }).eq("id", data.user.id);
@@ -77,6 +81,17 @@ Deno.serve(async (req) => {
         const { error } = await admin.auth.admin.updateUserById(body.user_id, { ban_duration: active ? "none" : "876000h" });
         if (error) return json({ error: error.message }, 400);
         await audit(user.id, body.user_id, active ? "REACTIVATE_USER" : "DEACTIVATE_USER", null);
+        return json({ ok: true });
+      }
+
+      case "reject_signup": {
+        // Removes an account that signed itself up and hasn't been approved.
+        const { data: p } = await admin.from("profiles").select("approved, email").eq("id", body.user_id).single();
+        if (!p) return json({ error: "Account not found" }, 404);
+        if (p.approved) return json({ error: "Only accounts waiting for approval can be rejected. Deactivate approved accounts instead." }, 400);
+        const { error } = await admin.auth.admin.deleteUser(body.user_id);
+        if (error) return json({ error: error.message }, 400);
+        await audit(user.id, body.user_id, "REJECT_SIGNUP", { email: p.email });
         return json({ ok: true });
       }
 

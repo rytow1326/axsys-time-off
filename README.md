@@ -11,7 +11,7 @@ Time-off requests and absence tracking for Axsys Dental Solutions.
 - **Email** — every new, changed or cancelled request emails ryant@axsysinc.com with a link to review
   it; employees are emailed the decision.
 
-Setup instructions: **[SETUP.md](SETUP.md)**.
+Setup: **[SETUP.md](SETUP.md)** — a one-button deploy, about 15 minutes, nothing to install.
 
 ## How it fits together
 
@@ -29,13 +29,19 @@ Setup instructions: **[SETUP.md](SETUP.md)**.
 | `supabase/functions/admin-users/` | Lets managers create logins, reset passwords and deactivate accounts |
 | `manager-portal/` | Static site (HTML/CSS/JS, no build step) |
 | `employee-app/` | Electron desktop app + Windows installer config |
-| `.github/workflows/` | Builds the Windows installer and publishes updates |
-| `tests/` | Database behaviour tests (49 checks) |
+| `.github/workflows/deploy.yml` | One-button deploy: database, email functions, portal hosting (GitHub Pages), Windows installer |
+| `deploy/` | The database/email setup script the Deploy button runs |
+| `docs/MANUAL-SETUP.md` | Step-by-step manual alternative |
+| `tests/` | Database behaviour tests (67 checks) |
 
 ## Rules the database enforces
 
 These live in Postgres, so they hold no matter which app (or tool) makes the change.
 
+- Anyone can create an account from the employee app, but **only with an @axsysinc.com email** (checked by the
+  database, so it can't be bypassed), and they must give a first and last name. New accounts wait in the portal's
+  **Employees → Waiting for approval** list; until a manager approves them (and sets their days per year) they can't
+  submit requests. Accounts a manager creates directly are approved immediately.
 - Employees can only see and submit their **own** time off; they can't see anyone else's records.
 - Employee requests are always created as **Pending** — only a manager can approve or deny.
 - Employees can edit or cancel a request only while it's pending. They can't delete anything.

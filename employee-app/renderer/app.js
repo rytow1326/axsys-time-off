@@ -77,6 +77,11 @@ async function init() {
     return;
   }
   $("#login-form").addEventListener("submit", onLogin);
+  $("#signup-form").addEventListener("submit", onSignup);
+  $("#show-signup").onclick = () => showLogin("", "signup");
+  $("#show-login").onclick = () => showLogin("", "login");
+  $("#pending-check").onclick = async () => { await enter(); if (!$("#pending-view").hidden) toast("Still waiting for approval."); };
+  $("#pending-signout").onclick = () => sb.auth.signOut();
   $("#new-request").onclick = () => openRequestForm(null);
   $("#bell").onclick = openDrawer;
   $("#drawer-close").onclick = () => ($("#drawer").hidden = true);
@@ -97,15 +102,60 @@ async function init() {
   setInterval(() => S.me && refresh(), 10 * 60 * 1000);
 }
 
-function showLogin(msg) {
+function showLogin(msg, mode = "login") {
   if (S.channel) { sb.removeChannel(S.channel); S.channel = null; }
+  if (S.pendingChannel) { sb.removeChannel(S.pendingChannel); S.pendingChannel = null; }
   S.me = null;
   $("#app-view").hidden = true;
+  $("#pending-view").hidden = true;
   $("#drawer").hidden = true;
   $("#login-view").hidden = false;
-  $("#login-error").hidden = !msg;
-  $("#login-error").textContent = msg || "";
+  $("#login-form").hidden = mode !== "login";
+  $("#signup-form").hidden = mode !== "signup";
+  const err = $(mode === "login" ? "#login-error" : "#signup-error");
+  err.hidden = !msg;
+  err.textContent = msg || "";
+  ($(mode === "login" ? "#login-form" : "#signup-form").querySelector("input"))?.focus();
   shell.setBadge(0);
+}
+
+const ALLOWED_DOMAIN = "axsysinc.com";
+
+async function onSignup(e) {
+  e.preventDefault();
+  const f = e.target;
+  const err = $("#signup-error");
+  const say = (m) => { err.textContent = m; err.hidden = false; };
+  err.hidden = true;
+  const first = f.first_name.value.trim(), last = f.last_name.value.trim();
+  const email = f.email.value.trim().toLowerCase();
+  if (!first || !last) return say("Please enter your first and last name.");
+  if (!/^[^@\s]+@[^@\s]+$/.test(email)) return say("Please enter a valid email address.");
+  if (!email.endsWith("@" + ALLOWED_DOMAIN)) return say(`Please use your @${ALLOWED_DOMAIN} work email.`);
+  if (f.password.value.length < 10) return say("Your password needs at least 10 characters.");
+  if (f.password.value !== f.password2.value) return say("The passwords don't match.");
+
+  const btn = $("button[type=submit]", f);
+  btn.disabled = true; btn.textContent = "Creating account…";
+  const { data, error } = await sb.auth.signUp({
+    email, password: f.password.value,
+    options: { data: { first_name: first, last_name: last } },
+  });
+  btn.disabled = false; btn.textContent = "Create account";
+  if (error) {
+    if (/already registered|already exists/i.test(error.message)) return say("An account with this email already exists. Sign in instead.");
+    if (/database error|only @/i.test(error.message)) return say(`Please use your @${ALLOWED_DOMAIN} work email.`);
+    if (/password/i.test(error.message)) return say(error.message);
+    return say(`Couldn't create the account: ${error.message}`);
+  }
+  f.reset();
+  if (!data.session) {
+    // Email confirmation is switched on in Supabase — tell them to check email
+    showLogin("", "login");
+    toast("Account created. Check your email to confirm it, then sign in.");
+    return;
+  }
+  await enter();
 }
 
 async function onLogin(e) {
@@ -130,6 +180,9 @@ async function enter() {
   const { data: me, error } = await sb.from("profiles").select("*").eq("id", user.id).single();
   if (error || !me) return showLogin("Your account isn't set up yet. Contact your manager.");
   if (!me.active) { await sb.auth.signOut(); return showLogin("This account has been deactivated."); }
+  if (!me.approved) return showPending(me);
+  if (S.pendingChannel) { sb.removeChannel(S.pendingChannel); S.pendingChannel = null; }
+  $("#pending-view").hidden = true;
   S.me = me;
   $("#user-name").textContent = me.full_name;
   $("#avatar").textContent = me.full_name.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
@@ -137,6 +190,21 @@ async function enter() {
   $("#app-view").hidden = false;
   await refresh();
   subscribe();
+}
+
+function showPending(me) {
+  $("#login-view").hidden = true;
+  $("#app-view").hidden = true;
+  $("#pending-view").hidden = false;
+  $("#pending-title").textContent = `Thanks, ${me.first_name || me.full_name.split(" ")[0]}!`;
+  // Switch to the app as soon as a manager approves the account
+  if (!S.pendingChannel) {
+    S.pendingChannel = sb.channel(`approval-${me.id}`)
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "profiles", filter: `id=eq.${me.id}` }, (p) => {
+        if (p.new.approved) { shell.notify("You're approved!", "Your Axsys Time Off account is ready to use."); enter(); }
+      })
+      .subscribe();
+  }
 }
 
 /* ---------- data ---------- */

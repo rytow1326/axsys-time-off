@@ -211,6 +211,13 @@ function subscribe() {
       clearTimeout(refreshTimer);
       refreshTimer = setTimeout(async () => { await loadAll(); render(); }, 350);
     })
+    .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, (payload) => {
+      if (payload.eventType === "INSERT" && payload.new.approved === false) {
+        toast(`${payload.new.full_name} created an account and is waiting for approval`);
+      }
+      clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(async () => { await loadAll(); render(); }, 350);
+    })
     .subscribe((status) => {
       $(".live")?.classList.toggle("off", status !== "SUBSCRIBED");
     });
@@ -242,7 +249,11 @@ function render() {
   const pill = $("#nav-pending");
   pill.hidden = !pending;
   pill.textContent = pending;
-  document.title = `${pending ? `(${pending}) ` : ""}Axsys Time Off — Manager Portal`;
+  const signups = S.profiles.filter((p) => !p.approved && p.active).length;
+  const pill2 = $("#nav-signups");
+  pill2.hidden = !signups;
+  pill2.textContent = signups;
+  document.title = `${pending + signups ? `(${pending + signups}) ` : ""}Axsys Time Off — Manager Portal`;
   if (S.calendar && S.route !== "calendar") { S.calendar.destroy(); S.calendar = null; }
   ({ dashboard: viewDashboard, requests: viewRequests, calendar: viewCalendar, employees: viewEmployees, activity: viewActivity })[S.route]();
 }
@@ -281,7 +292,14 @@ function viewDashboard() {
   const outRow = (e) => `<li><span><b>${esc(nameOf(e.employee_id))}</b><br><span class="muted small">${esc(typeOf(e.absence_type).label)}</span></span>
       <span class="small" style="text-align:right">${esc(rangeLabel(e))}<br><span class="muted">${fmtDays(e.days)}</span></span></li>`;
 
-  $("#page").innerHTML = `
+  const signups = S.profiles.filter((p) => !p.approved && p.active);
+  const signupBanner = signups.length ? `
+    <a class="banner-link" href="#/employees">
+      <b>${signups.length} new account${signups.length === 1 ? "" : "s"} waiting for approval</b>
+      <span>${esc(signups.slice(0, 3).map((p) => p.full_name).join(", "))}${signups.length > 3 ? "…" : ""} — set their days per year and approve →</span>
+    </a>` : "";
+
+  $("#page").innerHTML = `${signupBanner}
     <div class="stats">
       <div class="card stat accent"><div class="k">Pending requests</div><div class="v num">${pending.length}</div></div>
       <div class="card stat"><div class="k">Out today</div><div class="v num">${new Set(outToday.map((e) => e.employee_id)).size}</div></div>
@@ -361,7 +379,7 @@ function filteredEntries() {
 
 const employeeOptions = (sel, includeAll = true) =>
   (includeAll ? `<option value="">All employees</option>` : "") +
-  S.profiles.map((p) => `<option value="${p.id}" ${p.id === sel ? "selected" : ""}>${esc(p.full_name)}${p.active ? "" : " (inactive)"}</option>`).join("");
+  S.profiles.filter((p) => p.approved !== false || p.id === sel).map((p) => `<option value="${p.id}" ${p.id === sel ? "selected" : ""}>${esc(p.full_name)}${p.active ? "" : " (inactive)"}</option>`).join("");
 const typeOptions = (sel, includeAll = true) =>
   (includeAll ? `<option value="">All types</option>` : "") +
   S.types.map((t) => `<option value="${t.code}" ${t.code === sel ? "selected" : ""}>${esc(t.label)}</option>`).join("");
@@ -625,7 +643,25 @@ async function viewEmployees() {
   if (S.route !== "employees") return;
   if (error) { $("#page").innerHTML = `<section class="card"><div class="empty">Couldn't load: ${esc(error.message)}</div></section>`; return; }
 
-  $("#page").innerHTML = `
+  const pending = S.profiles.filter((p) => !p.approved && p.active).sort((x, y) => x.created_at.localeCompare(y.created_at));
+  const rows = data.filter((s) => profile(s.employee_id)?.approved !== false);
+
+  const pendingHtml = pending.length ? `
+    <section class="card approvals">
+      <div class="card-h"><h2>Waiting for approval <span class="pill" style="margin-left:6px">${pending.length}</span></h2>
+        <span class="muted small">These people created their own accounts. Set their days per year, then approve.</span></div>
+      ${pending.map((p) => `
+        <div class="approval-row">
+          <div><b>${esc(p.full_name)}</b><div class="muted small">${esc(p.email)} · signed up ${esc(fmtTime(p.created_at))}</div></div>
+          <label class="days-field">Days per year<input type="number" min="0" max="365" step="0.5" value="${Number(p.annual_allowance)}" data-pending-days="${p.id}"></label>
+          <div class="btn-row">
+            <button class="btn ok" data-approve-user="${p.id}">Approve</button>
+            <button class="btn danger" data-reject-user="${p.id}">Reject</button>
+          </div>
+        </div>`).join("")}
+    </section>` : "";
+
+  $("#page").innerHTML = `${pendingHtml}
     <section class="card">
       <div class="filters">
         <label>Year<select id="e-year">${[thisYear - 3, thisYear - 2, thisYear - 1, thisYear, thisYear + 1].map((y) => `<option ${y === S.year ? "selected" : ""}>${y}</option>`).join("")}</select></label>
@@ -633,30 +669,32 @@ async function viewEmployees() {
         <button class="btn" id="e-export">⤓ Export ${S.year} to Excel</button>
         <button class="btn primary" id="e-add">+ Add employee</button>
       </div>
-      <div class="table-wrap"><table class="data">
-        <thead><tr><th>Employee</th><th class="r">Vacation/PTO</th><th class="r">Sick</th><th class="r">Personal</th><th class="r">Other</th>
-          <th class="r">Total off</th><th>Allowance</th><th class="r">Pending</th><th></th></tr></thead>
-        <tbody>${data.map((s) => {
+      <div class="table-wrap"><table class="data emp-table">
+        <thead><tr><th>Employee</th><th class="r">Days per year</th><th class="r">Vacation/PTO</th><th class="r">Sick</th><th class="r">Personal</th><th class="r">Other</th>
+          <th class="r">Total off</th><th>Remaining</th><th class="r">Pending</th><th></th></tr></thead>
+        <tbody>${rows.map((s) => {
           const p = profile(s.employee_id) || {};
           const pct = s.annual_allowance > 0 ? Math.min(100, (s.allowance_used / s.annual_allowance) * 100) : 0;
           return `<tr class="${s.active ? "" : "inactive"}">
             <td><b>${esc(s.full_name)}</b>${p.role === "manager" ? ` <span class="badge">Manager</span>` : ""}${s.active ? "" : ` <span class="badge cancelled">Inactive</span>`}
               <div class="muted small">${esc(s.email)}</div></td>
+            <td class="r"><input class="days-input" type="number" min="0" max="365" step="0.5" value="${Number(s.annual_allowance)}"
+                 data-days="${s.employee_id}" aria-label="Days per year for ${esc(s.full_name)}" ${s.active ? "" : "disabled"}></td>
             <td class="r num">${Number(s.pto_days)}</td>
             <td class="r num">${Number(s.sick_days)}</td>
             <td class="r num">${Number(s.personal_days)}</td>
             <td class="r num">${Number(s.other_days)}</td>
             <td class="r num"><b>${Number(s.total_days)}</b></td>
-            <td style="min-width:150px"><span class="num"><b>${Number(s.remaining)}</b> left</span> <span class="muted small">of ${Number(s.annual_allowance)}</span>
+            <td style="min-width:130px"><span class="num"><b>${Number(s.remaining)}</b> left</span>
               <div class="bar ${s.remaining < 0 ? "over" : ""}"><span style="width:${pct}%"></span></div></td>
             <td class="r num">${Number(s.pending_days) || ""}</td>
             <td><div class="btn-row" style="justify-content:flex-end">
               <button class="btn small" data-records="${s.employee_id}">Records</button>
               <button class="btn small" data-edit-emp="${s.employee_id}">Edit</button>
             </div></td></tr>`;
-        }).join("") || `<tr><td colspan="9" class="empty">No employees yet. Click “Add employee”.</td></tr>`}
+        }).join("") || `<tr><td colspan="10" class="empty">No employees yet. They can create accounts in the app, or click “Add employee”.</td></tr>`}
         </tbody></table></div>
-      <div class="card-b small muted">Vacation/PTO and Personal days count toward the yearly allowance. Sick and Other days are tracked but don't reduce it. Weekends are never counted.</div>
+      <div class="card-b small muted">Type in <b>Days per year</b> to change someone's allowance — it saves automatically. Vacation/PTO and Personal days count toward it; Sick and Other days are tracked but don't reduce it. Weekends are never counted.</div>
     </section>`;
 
   $("#e-year").onchange = (ev) => { S.year = Number(ev.target.value); viewEmployees(); };
@@ -670,6 +708,45 @@ async function viewEmployees() {
     location.hash = "#/requests";
   }));
   $$("[data-edit-emp]").forEach((b) => (b.onclick = () => editEmployeeDialog(profile(b.dataset.editEmp))));
+
+  // Inline "days per year" — saves on change (Enter or leaving the box)
+  $$("[data-days]").forEach((inp) => {
+    inp.addEventListener("keydown", (e) => { if (e.key === "Enter") inp.blur(); });
+    inp.addEventListener("change", () => saveDays(inp, inp.dataset.days));
+  });
+
+  // Approvals
+  $$("[data-approve-user]").forEach((b) => (b.onclick = () => busy(b, async () => {
+    const id = b.dataset.approveUser;
+    const days = Number($(`[data-pending-days="${CSS.escape(id)}"]`).value);
+    if (!(days >= 0 && days <= 365)) return toast("Enter the number of days per year (0–365).", "error");
+    const { error } = await sb.from("profiles").update({ approved: true, annual_allowance: days }).eq("id", id);
+    if (error) return toast(error.message, "error");
+    toast(`${nameOf(id)} approved with ${days} days per year. Their app unlocks right away.`);
+    await loadAll(); render();
+  })));
+  $$("[data-reject-user]").forEach((b) => (b.onclick = async () => {
+    const id = b.dataset.rejectUser;
+    const ok = await confirmDialog("Reject this sign-up?", `This deletes the account for <b>${esc(nameOf(id))}</b> (${esc(profile(id)?.email)}). They can sign up again later if this was a mistake.`, "Reject", true);
+    if (!ok) return;
+    try { await invokeAdmin({ action: "reject_signup", user_id: id }); toast("Sign-up rejected."); await loadAll(); render(); }
+    catch (e) { toast(e.message, "error"); }
+  }));
+}
+
+async function saveDays(inp, id) {
+  const days = Number(inp.value);
+  const before = Number(profile(id)?.annual_allowance);
+  if (inp.value === "" || !(days >= 0 && days <= 365)) { inp.value = before; return toast("Days per year must be between 0 and 365.", "error"); }
+  if (days === before) return;
+  inp.classList.add("saving");
+  const { error } = await sb.from("profiles").update({ annual_allowance: days }).eq("id", id);
+  inp.classList.remove("saving");
+  if (error) { inp.value = before; return toast(error.message, "error"); }
+  inp.classList.add("saved"); setTimeout(() => inp.classList.remove("saved"), 1200);
+  toast(`${nameOf(id)}: ${days} days per year saved.`);
+  await loadAll();
+  if (S.route === "employees") viewEmployees();
 }
 
 function addEmployeeDialog() {
@@ -677,12 +754,13 @@ function addEmployeeDialog() {
   openModal({
     title: "Add employee",
     body: `<form id="emp-form" class="form-grid">
-        <label class="full">Full name<input name="full_name" required></label>
+        <label>First name<input name="first_name" required maxlength="60"></label>
+        <label>Last name<input name="last_name" required maxlength="60"></label>
         <label class="full">Work email<input name="email" type="email" required placeholder="name@axsysinc.com"></label>
-        <label>Yearly allowance (days)<input name="annual_allowance" type="number" min="0" step="0.5" value="10" required></label>
+        <label>Days per year<input name="annual_allowance" type="number" min="0" max="365" step="0.5" value="10" required></label>
         <label>Role<select name="role"><option value="employee">Employee</option><option value="manager">Manager</option></select></label>
         <label class="full">Temporary password<input name="password" value="${esc(pw)}" minlength="10" required></label>
-        <p class="muted small full" style="margin:0">Share the email and temporary password with the employee. They can change the password in the app under “Account”.</p>
+        <p class="muted small full" style="margin:0">Tip: employees can also create their own account in the app — you'll just approve it. Use this form if you'd rather set them up yourself.</p>
         <p class="form-error full" id="emp-error" hidden></p>
       </form>`,
     footer: `<button class="btn" data-cancel>Cancel</button><button class="btn primary" data-save>Create account</button>`,
@@ -692,15 +770,17 @@ function addEmployeeDialog() {
       $("[data-save]", el).onclick = (ev) => busy(ev.currentTarget, async () => {
         if (!f.reportValidity()) return;
         const err = $("#emp-error", el);
+        if (!f.email.value.trim().toLowerCase().endsWith("@axsysinc.com")) { err.textContent = "Use an @axsysinc.com email address."; err.hidden = false; return; }
+        const name = `${f.first_name.value.trim()} ${f.last_name.value.trim()}`;
         try {
           await invokeAdmin({
-            action: "create", full_name: f.full_name.value.trim(), email: f.email.value.trim(),
+            action: "create", first_name: f.first_name.value.trim(), last_name: f.last_name.value.trim(), email: f.email.value.trim(),
             annual_allowance: Number(f.annual_allowance.value), role: f.role.value, password: f.password.value,
           });
           close();
           openModal({
             title: "Account created",
-            body: `<p style="margin:0">Send these sign-in details to <b>${esc(f.full_name.value)}</b>:</p>
+            body: `<p style="margin:0">Send these sign-in details to <b>${esc(name)}</b>:</p>
               <div class="daycount" style="font-family:Consolas,monospace;user-select:all">Email: ${esc(f.email.value.trim())}<br>Temporary password: ${esc(f.password.value)}</div>`,
             footer: `<button class="btn primary" data-ok>Done</button>`,
             onMount: (el2, close2) => ($("[data-ok]", el2).onclick = close2),
@@ -715,11 +795,14 @@ function addEmployeeDialog() {
 function editEmployeeDialog(p) {
   if (!p) return;
   const self = p.id === S.me.id;
+  const first = p.first_name ?? p.full_name.split(" ")[0];
+  const last = p.last_name ?? p.full_name.split(" ").slice(1).join(" ");
   openModal({
     title: `Edit ${p.full_name}`,
     body: `<form id="emp-form" class="form-grid">
-        <label class="full">Full name<input name="full_name" value="${esc(p.full_name)}" required></label>
-        <label>Yearly allowance (days)<input name="annual_allowance" type="number" min="0" step="0.5" value="${Number(p.annual_allowance)}" required></label>
+        <label>First name<input name="first_name" value="${esc(first)}" required maxlength="60"></label>
+        <label>Last name<input name="last_name" value="${esc(last)}" required maxlength="60"></label>
+        <label>Days per year<input name="annual_allowance" type="number" min="0" max="365" step="0.5" value="${Number(p.annual_allowance)}" required></label>
         <label>Role<select name="role"><option value="employee" ${p.role === "employee" ? "selected" : ""}>Employee</option>
           <option value="manager" ${p.role === "manager" ? "selected" : ""}>Manager</option></select></label>
         <p class="form-error full" id="emp-error" hidden></p>
@@ -741,8 +824,10 @@ function editEmployeeDialog(p) {
       $("[data-cancel]", el).onclick = close;
       $("[data-save]", el).onclick = (ev) => busy(ev.currentTarget, async () => {
         if (!f.reportValidity()) return;
+        const fn = f.first_name.value.trim(), ln = f.last_name.value.trim();
         const { error } = await sb.from("profiles").update({
-          full_name: f.full_name.value.trim(), annual_allowance: Number(f.annual_allowance.value), role: f.role.value,
+          first_name: fn, last_name: ln, full_name: `${fn} ${ln}`.trim(),
+          annual_allowance: Number(f.annual_allowance.value), role: f.role.value,
         }).eq("id", p.id);
         if (error) { err.textContent = error.message; err.hidden = false; return; }
         toast("Employee updated."); close(); await loadAll(); render();
@@ -779,7 +864,7 @@ function resetPasswordDialog(p) {
 }
 
 /* ================= Activity ================= */
-const FIELD_LABELS = { start_date: "start", end_date: "end", start_half: "half-day start", end_half: "half-day end", absence_type: "type", notes: "notes", status: "status", employee_id: "employee", review_note: "manager note", full_name: "name", annual_allowance: "allowance", role: "role", active: "active" };
+const FIELD_LABELS = { start_date: "start", end_date: "end", start_half: "half-day start", end_half: "half-day end", absence_type: "type", notes: "notes", status: "status", employee_id: "employee", review_note: "manager note", full_name: "name", annual_allowance: "days per year", first_name: "first name", last_name: "last name", approved: "approved", role: "role", active: "active" };
 
 function describeChange(a) {
   const n = a.new_data || {}, o = a.old_data || {};
@@ -792,13 +877,20 @@ function describeChange(a) {
     const changed = Object.keys(FIELD_LABELS).filter((k) => k in n && JSON.stringify(o[k]) !== JSON.stringify(n[k]));
     return `edited ${what}${changed.length ? ` — ${changed.map((k) => `${FIELD_LABELS[k]}: ${o[k] ?? "—"} → ${n[k] ?? "—"}`).join("; ")}` : ""}`;
   }
+  if (a.table_name === "profiles" && a.action === "INSERT") {
+    return n.approved ? `account created for ${n.full_name}` : `${n.full_name} (${n.email}) signed up — waiting for approval`;
+  }
+  if (a.table_name === "profiles" && o.approved === false && n.approved === true) {
+    return `approved ${n.full_name}'s account with ${n.annual_allowance} days per year`;
+  }
   if (a.table_name === "profiles") {
-    const changed = ["full_name", "annual_allowance", "role", "active"].filter((k) => JSON.stringify(o[k]) !== JSON.stringify(n[k]));
+    const changed = ["first_name", "last_name", "annual_allowance", "role", "active"].filter((k) => JSON.stringify(o[k]) !== JSON.stringify(n[k]));
     return `updated ${rec.full_name}${changed.length ? ` — ${changed.map((k) => `${FIELD_LABELS[k]}: ${o[k]} → ${n[k]}`).join("; ")}` : ""}`;
   }
   const target = nameOf(a.record_id);
   return ({ CREATE_USER: `created an account for ${n?.full_name || target}`, RESET_PASSWORD: `reset the password for ${target}`,
-    DEACTIVATE_USER: `deactivated ${target}`, REACTIVATE_USER: `reactivated ${target}` })[a.action] || a.action;
+    DEACTIVATE_USER: `deactivated ${target}`, REACTIVATE_USER: `reactivated ${target}`,
+    REJECT_SIGNUP: `rejected the sign-up from ${n?.email || "an account"}` })[a.action] || a.action;
 }
 
 async function viewActivity() {

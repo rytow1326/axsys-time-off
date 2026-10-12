@@ -24,8 +24,40 @@
     <label>Password<input type="password" name="password" required autocomplete="current-password"></label>
     <p class="form-error" id="login-error" hidden></p>
     <button class="btn primary block" type="submit">Sign in</button>
+    <p class="switch">New here? <button type="button" class="link" id="show-signup">Create an account</button></p>
     <p class="muted small">Forgot your password? Ask your manager to reset it.</p>
   </form>
+
+  <form id="signup-form" class="login-card" hidden novalidate>
+    <h2>Create your account</h2>
+    <div class="row2">
+      <label>First name<input name="first_name" required autocomplete="given-name" maxlength="60"></label>
+      <label>Last name<input name="last_name" required autocomplete="family-name" maxlength="60"></label>
+    </div>
+    <label>Work email<input type="email" name="email" required autocomplete="username" placeholder="you@axsysinc.com"></label>
+    <label>Password<input type="password" name="password" required minlength="10" autocomplete="new-password"></label>
+    <label>Confirm password<input type="password" name="password2" required minlength="10" autocomplete="new-password"></label>
+    <p class="muted small" style="margin:0">Use your @axsysinc.com email. Passwords need at least 10 characters.</p>
+    <p class="form-error" id="signup-error" hidden></p>
+    <button class="btn primary block" type="submit">Create account</button>
+    <p class="switch">Already have an account? <button type="button" class="link" id="show-login">Sign in</button></p>
+  </form>
+</section>
+
+<!-- Waiting for approval -->
+<section id="pending-view" class="login" hidden>
+  <div class="login-panel">
+    <img src="logo.svg" alt="Axsys Dental Solutions" class="login-logo">
+    <h1>Time Off</h1>
+  </div>
+  <div class="login-card">
+    <div class="pending-icon">⏳</div>
+    <h2 id="pending-title">Almost there</h2>
+    <p>Your account has been created and is <b>waiting for approval</b> from your manager.</p>
+    <p class="muted">Once you're approved, this screen will switch to the app automatically — you can leave it open, or close it and sign in later.</p>
+    <button class="btn block" id="pending-check">Check again</button>
+    <button class="btn block" id="pending-signout">Sign out</button>
+  </div>
 </section>
 
 <!-- Main -->

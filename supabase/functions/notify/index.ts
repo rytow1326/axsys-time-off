@@ -90,9 +90,26 @@ Deno.serve(async (req) => {
     return new Response("Unauthorized", { status: 401 });
   }
 
-  const { event, time_off_id, previous } = (await req.json()) as {
-    event: Event; time_off_id: string; previous?: Record<string, unknown>;
+  const { event, time_off_id, previous, profile_id } = (await req.json()) as {
+    event: Event | "user_signed_up"; time_off_id: string; previous?: Record<string, unknown>; profile_id?: string;
   };
+  const portalBase = env("PORTAL_URL").replace(/\/$/, "");
+  const managerList = env("MANAGER_EMAIL").split(",").map((s) => s.trim()).filter(Boolean);
+
+  // Someone created their own account and is waiting for approval
+  if (event === "user_signed_up") {
+    const { data: p } = await supabase.from("profiles").select("full_name, email, approved, created_at").eq("id", profile_id).single();
+    if (!p || p.approved || !managerList.length) return new Response("Nothing to send", { status: 200 });
+    const subject = `New account waiting for approval: ${p.full_name}`;
+    const html = layout("New employee account", `<b>${esc(p.full_name)}</b> created an account in the Time Off app. Approve it and set their yearly days so they can start requesting time off.`,
+      [["Name", esc(p.full_name)], ["Email", esc(p.email)]], { href: `${portalBase}/#/employees`, label: "Review in Manager Portal" });
+    const result = await sendEmail(managerList, subject, html, p.email);
+    await supabase.from("email_log").insert(managerList.map((recipient) => ({
+      event, time_off_id: null, recipient, subject, status: result.ok ? "sent" : "failed",
+      provider_id: result.ok ? result.id : null, error: result.ok ? null : result.error,
+    })));
+    return new Response(JSON.stringify(result), { status: result.ok ? 200 : 502, headers: { "Content-Type": "application/json" } });
+  }
 
   const { data: r, error } = await supabase
     .from("time_off")

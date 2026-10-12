@@ -29,6 +29,7 @@ insert into auth.users (id, email, raw_user_meta_data) values
   ('00000000-0000-0000-0000-00000000000a', 'ryant@axsysinc.com', '{"full_name":"Ryan T"}'),
   ('00000000-0000-0000-0000-00000000000b', 'alice@axsysinc.com', '{"full_name":"Alice Employee"}'),
   ('00000000-0000-0000-0000-00000000000c', 'bob@axsysinc.com',   '{}');
+update public.profiles set approved = true;  -- these test users were 'approved' by a manager
 update public.profiles set role = 'manager' where email = 'ryant@axsysinc.com';
 update public.profiles set annual_allowance = 15 where email = 'alice@axsysinc.com';
 
