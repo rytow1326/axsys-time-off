@@ -36,8 +36,6 @@ jobs:
     name: Database, email & accounts
     runs-on: ubuntu-latest
     outputs:
-      url: ${{ steps.setup.outputs.url }}
-      anon_key: ${{ steps.setup.outputs.anon_key }}
       portal_url: ${{ steps.portal.outputs.portal_url }}
     steps:
       - uses: actions/checkout@v4
@@ -191,13 +189,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Write settings
+        # Fetched here (not passed from the first job) because GitHub blanks
+        # values that contain a secret when passing them between jobs.
+        env:
+          T: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          R: ${{ secrets.SUPABASE_PROJECT_REF }}
         run: |
-          cat > manager-portal/config.js <<EOF
-          window.AXSYS_CONFIG = {
-            SUPABASE_URL: "${{ needs.backend.outputs.url }}",
-            SUPABASE_ANON_KEY: "${{ needs.backend.outputs.anon_key }}",
-          };
-          EOF
+          ANON=$(curl -fsS -H "Authorization: Bearer $T" "https://api.supabase.com/v1/projects/$R/api-keys?reveal=true" \
+                 | jq -r '.[] | select(.name=="anon") | .api_key')
+          [ -n "$ANON" ] || { echo "::error::Couldn't read the project's public key"; exit 1; }
+          printf 'window.AXSYS_CONFIG = {\n  SUPABASE_URL: "https://%s.supabase.co",\n  SUPABASE_ANON_KEY: "%s",\n};\n' "$R" "$ANON" > manager-portal/config.js
+          grep -q 'supabase.co' manager-portal/config.js && grep -q 'SUPABASE_ANON_KEY: ".\{20,\}"' manager-portal/config.js \
+            || { echo "::error::Portal settings came out empty"; exit 1; }
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
@@ -220,11 +223,17 @@ jobs:
           node-version: 22
 
       - name: Write settings
+        env:
+          T: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          R: ${{ secrets.SUPABASE_PROJECT_REF }}
         run: |
+          $keys = Invoke-RestMethod -Headers @{ Authorization = "Bearer $env:T" } -Uri "https://api.supabase.com/v1/projects/$($env:R)/api-keys?reveal=true"
+          $anon = ($keys | Where-Object { $_.name -eq 'anon' }).api_key
+          if (-not $anon -or $anon.Length -lt 20) { throw "Couldn't read the project's public key" }
           @"
           window.AXSYS_CONFIG = {
-            SUPABASE_URL: "${{ needs.backend.outputs.url }}",
-            SUPABASE_ANON_KEY: "${{ needs.backend.outputs.anon_key }}",
+            SUPABASE_URL: "https://$($env:R).supabase.co",
+            SUPABASE_ANON_KEY: "$anon",
           };
           "@ | Set-Content -Encoding utf8 renderer/config.js
           $pkg = Get-Content package.json -Raw | ConvertFrom-Json
