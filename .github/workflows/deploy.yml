@@ -1,6 +1,7 @@
 # ONE BUTTON: sets up the database + email, publishes the manager portal, and
 # builds the Windows installer. Run it from the Actions tab → "Deploy" → Run workflow.
 # Run it again any time you change something — it's safe to repeat.
+# This file is self-contained: it's the only file the Deploy button needs besides the app folders.
 #
 # Repository secrets needed (Settings → Secrets and variables → Actions):
 #   SUPABASE_ACCESS_TOKEN   supabase.com → Account → Access Tokens → Generate
@@ -70,7 +71,102 @@ jobs:
           MANAGER_EMAIL: ${{ inputs.manager_email }}
           MANAGER_NAME: ${{ inputs.manager_name }}
           PORTAL_URL: ${{ steps.portal.outputs.portal_url }}
-        run: bash deploy/deploy-backend.sh
+        run: |
+          # Sets up / updates the Supabase project. Run by the "Deploy" GitHub Action.
+          # Safe to run again any time: already-applied steps are skipped or overwritten.
+          #
+          # Required env:  SUPABASE_ACCESS_TOKEN  SUPABASE_PROJECT_REF  MANAGER_EMAIL  MANAGER_NAME
+          #                MANAGER_PASSWORD (only needed the first time)  PORTAL_URL
+          # Optional env:  RESEND_API_KEY  EMAIL_FROM
+          set -euo pipefail
+
+          API="${SUPABASE_API_BASE:-https://api.supabase.com}/v1/projects/${SUPABASE_PROJECT_REF}"
+          AUTH=(-H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" -H "Content-Type: application/json")
+          URL="https://${SUPABASE_PROJECT_REF}.supabase.co"
+          AUTH_URL="${SUPABASE_AUTH_BASE:-$URL}"   # overridable for local testing
+          fail() { echo "::error::$*"; exit 1; }
+          for d in supabase/migrations supabase/functions/notify supabase/functions/admin-users manager-portal employee-app; do
+            [[ -d "$d" ]] || fail "The folder '$d' is missing from the repository. Upload it (Add file → Upload files) and run Deploy again."
+          done
+          sqlq() { printf "%s" "${1//\'/\'\'}"; }   # escape for a SQL string literal
+
+          # Run SQL through the Supabase Management API
+          q() {
+            local out code
+            out=$(jq -n --arg q "$1" '{query: $q}' | curl -sS -w '\n%{http_code}' -X POST "${AUTH[@]}" "$API/database/query" -d @-)
+            code=${out##*$'\n'}; out=${out%$'\n'*}
+            [[ "$code" == 2* ]] || fail "Database query failed ($code): $out"
+            printf '%s' "$out"
+          }
+
+          echo "▶ Checking the Supabase project"
+          KEYS=$(curl -sS "${AUTH[@]}" "$API/api-keys?reveal=true") || fail "Couldn't reach Supabase"
+          ANON=$(jq -r 'if type=="array" then (.[] | select(.name=="anon") | .api_key) else empty end' <<<"$KEYS")
+          SERVICE=$(jq -r 'if type=="array" then (.[] | select(.name=="service_role") | .api_key) else empty end' <<<"$KEYS")
+          [[ -n "$ANON" && -n "$SERVICE" ]] || fail "Couldn't read the project's API keys. Check the SUPABASE_PROJECT_REF and SUPABASE_ACCESS_TOKEN secrets. ($KEYS)"
+          echo "::add-mask::$SERVICE"
+
+          echo "▶ Applying database changes"
+          q "create schema if not exists supabase_migrations;
+             create table if not exists supabase_migrations.schema_migrations (version text primary key, statements text[], name text);" >/dev/null
+          for f in supabase/migrations/*.sql; do
+            base=$(basename "$f" .sql); version=${base%%_*}; name=${base#*_}
+            done_count=$(q "select count(*)::int as n from supabase_migrations.schema_migrations where version = '$version'" | jq -r '.[0].n')
+            if [[ "$done_count" == "0" ]]; then
+              echo "  applying $base"
+              q "begin;
+          $(cat "$f")
+          insert into supabase_migrations.schema_migrations (version, name) values ('$version', '$name');
+          commit;" >/dev/null
+            else
+              echo "  $base already applied"
+            fi
+          done
+
+          echo "▶ Locking down sign-up (accounts are created by managers only)"
+          curl -fsS -X PATCH "${AUTH[@]}" "$API/config/auth" -d '{"disable_signup": true}' >/dev/null \
+            || echo "::warning::Couldn't turn off public sign-up automatically. Do it in Supabase → Authentication → Sign In / Providers."
+
+          echo "▶ Deploying server functions"
+          NOTIFY_SECRET=$(openssl rand -hex 32)
+          echo "::add-mask::$NOTIFY_SECRET"
+          secrets=("NOTIFY_SECRET=$NOTIFY_SECRET" "MANAGER_EMAIL=$MANAGER_EMAIL" "PORTAL_URL=$PORTAL_URL"
+                   "EMAIL_FROM=${EMAIL_FROM:-Axsys Time Off <onboarding@resend.dev>}")
+          [[ -n "${RESEND_API_KEY:-}" ]] && secrets+=("RESEND_API_KEY=$RESEND_API_KEY")
+          supabase secrets set --project-ref "$SUPABASE_PROJECT_REF" "${secrets[@]}" >/dev/null
+          supabase functions deploy notify      --project-ref "$SUPABASE_PROJECT_REF" --use-api --no-verify-jwt
+          supabase functions deploy admin-users --project-ref "$SUPABASE_PROJECT_REF" --use-api
+
+          if [[ -n "${RESEND_API_KEY:-}" ]]; then
+            echo "▶ Turning on email notifications"
+            q "insert into private.settings (key, value) values
+                 ('notify_url', '$(sqlq "$URL/functions/v1/notify")'),
+                 ('notify_secret', '$NOTIFY_SECRET')
+               on conflict (key) do update set value = excluded.value;" >/dev/null
+          else
+            echo "::warning::RESEND_API_KEY isn't set, so emails are off. The apps work fine without it; add the secret and run Deploy again to turn email on."
+            q "delete from private.settings where key in ('notify_url','notify_secret');" >/dev/null
+          fi
+
+          echo "▶ Making sure the manager account exists"
+          exists=$(q "select count(*)::int as n from auth.users where lower(email) = lower('$(sqlq "$MANAGER_EMAIL")')" | jq -r '.[0].n')
+          if [[ "$exists" == "0" ]]; then
+            [[ ${#MANAGER_PASSWORD} -ge 10 ]] || fail "Add a MANAGER_PASSWORD secret (10+ characters) for the first deploy."
+            body=$(jq -n --arg e "$MANAGER_EMAIL" --arg p "$MANAGER_PASSWORD" --arg n "$MANAGER_NAME" \
+              '{email: $e, password: $p, email_confirm: true, user_metadata: {full_name: $n}}')
+            curl -fsS -X POST "$AUTH_URL/auth/v1/admin/users" -H "apikey: $SERVICE" -H "Authorization: Bearer $SERVICE" \
+              -H "Content-Type: application/json" -d "$body" >/dev/null || fail "Couldn't create the manager account"
+            echo "  created $MANAGER_EMAIL"
+          fi
+          q "update public.profiles set role = 'manager', active = true, full_name = '$(sqlq "$MANAGER_NAME")'
+             where lower(email) = lower('$(sqlq "$MANAGER_EMAIL")');" >/dev/null
+
+          # Hand the public settings to the next steps (the anon key is public by design)
+          {
+            echo "url=$URL"
+            echo "anon_key=$ANON"
+          } >> "${GITHUB_OUTPUT:-/dev/null}"
+          echo "✔ Backend ready at $URL"
 
   portal:
     name: Manager portal
