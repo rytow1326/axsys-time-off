@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src https://*.supabase.co wss://*.supabase.co; font-src 'self'">
+  <title>Axsys Time Off</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="vendor/supabase.js"></script>
+  <script src="config.js"></script>
+</head>
+<body>
+
+<!-- Sign in -->
+<section id="login-view" class="login" hidden>
+  <div class="login-panel">
+    <img src="logo.svg" alt="Axsys Dental Solutions" class="login-logo">
+    <h1>Time Off</h1>
+    <p>Request vacation and personal days, and keep track of your time off.</p>
+  </div>
+  <form id="login-form" class="login-card">
+    <h2>Sign in</h2>
+    <label>Work email<input type="email" name="email" required autocomplete="username"></label>
+    <label>Password<input type="password" name="password" required autocomplete="current-password"></label>
+    <p class="form-error" id="login-error" hidden></p>
+    <button class="btn primary block" type="submit">Sign in</button>
+    <p class="muted small">Forgot your password? Ask your manager to reset it.</p>
+  </form>
+</section>
+
+<!-- Main -->
+<div id="app-view" hidden>
+  <header class="appbar">
+    <img src="logo.svg" alt="Axsys Dental Solutions" class="bar-logo">
+    <span class="bar-title">Time Off</span>
+    <span class="spacer"></span>
+    <span class="live" title="Updates automatically"><span class="dot"></span></span>
+    <button class="icon-btn" id="bell" aria-label="Notifications">🔔<span class="count" id="bell-count" hidden></span></button>
+    <div class="menu-wrap">
+      <button class="user-btn" id="user-btn"><span class="avatar" id="avatar"></span><span id="user-name"></span> ▾</button>
+      <div class="menu" id="user-menu" hidden>
+        <button id="menu-account">Account &amp; password</button>
+        <button id="menu-signout">Sign out</button>
+      </div>
+    </div>
+  </header>
+
+  <div id="update-banner" class="banner" hidden>
+    A new version is ready. <button class="btn small primary" id="install-update">Restart &amp; update</button>
+  </div>
+
+  <main class="wrap">
+    <section class="hero">
+      <div class="hero-main card">
+        <div class="hero-label" id="hero-label">Vacation / PTO remaining</div>
+        <div class="hero-num"><span id="remaining" class="num">–</span><span class="of" id="of-allowance"></span></div>
+        <div class="meter"><span id="meter-fill"></span></div>
+        <div class="hero-sub" id="hero-sub"></div>
+        <button class="btn primary big" id="new-request">+ Request time off</button>
+      </div>
+      <div class="tiles">
+        <div class="card tile"><div class="k">Days off taken <span id="year-label"></span></div><div class="v num" id="t-total">–</div></div>
+        <div class="card tile"><div class="k">Vacation / PTO</div><div class="v num" id="t-pto">–</div></div>
+        <div class="card tile"><div class="k">Sick days</div><div class="v num" id="t-sick">–</div></div>
+        <div class="card tile"><div class="k">Personal &amp; other</div><div class="v num" id="t-other">–</div></div>
+        <div class="card tile pending"><div class="k">Pending approval</div><div class="v num" id="t-pending">–</div></div>
+      </div>
+    </section>
+
+    <section class="card list-card">
+      <div class="list-h">
+        <h2>My time off</h2>
+        <div class="tabs" id="tabs">
+          <button data-tab="upcoming" class="on">Upcoming</button>
+          <button data-tab="past">Past</button>
+          <button data-tab="all">All</button>
+        </div>
+      </div>
+      <div id="list"></div>
+    </section>
+    <p class="foot muted small">Axsys Dental Solutions · The Trusted Authority in Digital Manufacturing · <span id="version"></span></p>
+  </main>
+</div>
+
+<!-- Notifications drawer -->
+<aside id="drawer" class="drawer" hidden>
+  <div class="drawer-h"><h2>Notifications</h2><button class="x" id="drawer-close" aria-label="Close">×</button></div>
+  <div id="drawer-list"></div>
+</aside>
+
+<div id="modal-root"></div>
+<div id="toasts"></div>
+<script src="app.js"></script>
+</body>
+</html>

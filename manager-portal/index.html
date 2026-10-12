@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Axsys Time Off — Manager Portal</title>
+  <link rel="icon" href="assets/logo.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="config.js"></script>
+</head>
+<body>
+
+<!-- ============ Sign in ============ -->
+<section id="login-view" class="login" hidden>
+  <div class="login-brand">
+    <img src="assets/logo.svg" alt="Axsys Dental Solutions" class="login-logo">
+    <h1>Time Off<br>Manager Portal</h1>
+    <p>Review requests, record absences and track time off across the team.</p>
+  </div>
+  <form id="login-form" class="login-card" autocomplete="on">
+    <h2>Sign in</h2>
+    <label>Email<input type="email" name="email" required autocomplete="username"></label>
+    <label>Password<input type="password" name="password" required autocomplete="current-password"></label>
+    <p class="form-error" id="login-error" hidden></p>
+    <button class="btn primary block" type="submit">Sign in</button>
+    <p class="muted small">Manager access only. Employees use the Axsys Time Off desktop app.</p>
+  </form>
+</section>
+
+<!-- ============ App ============ -->
+<div id="app-view" class="shell" hidden>
+  <aside class="sidebar">
+    <img src="assets/logo.svg" alt="Axsys Dental Solutions" class="side-logo">
+    <div class="side-sub">Time Off · Manager</div>
+    <nav>
+      <a href="#/dashboard" data-route="dashboard"><span class="ico">◧</span>Dashboard<span class="pill" id="nav-pending" hidden></span></a>
+      <a href="#/requests"  data-route="requests"><span class="ico">☰</span>Requests &amp; absences</a>
+      <a href="#/calendar"  data-route="calendar"><span class="ico">▦</span>Calendar</a>
+      <a href="#/employees" data-route="employees"><span class="ico">◉</span>Employees</a>
+      <a href="#/activity"  data-route="activity"><span class="ico">↻</span>Activity log</a>
+    </nav>
+    <div class="side-foot">
+      <div class="me" id="me-name"></div>
+      <button class="btn ghost small" id="sign-out">Sign out</button>
+    </div>
+  </aside>
+
+  <main class="content">
+    <header class="topbar">
+      <h1 id="page-title">Dashboard</h1>
+      <div class="topbar-actions">
+        <span class="live" title="Updates automatically"><span class="dot"></span>Live</span>
+        <button class="btn primary" id="add-absence-btn">+ Record absence</button>
+      </div>
+    </header>
+    <div id="page"></div>
+  </main>
+</div>
+
+<!-- Modal + toast hosts -->
+<div id="modal-root"></div>
+<div id="toasts"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

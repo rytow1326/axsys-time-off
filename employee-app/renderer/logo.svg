@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 56" role="img" aria-label="Axsys Dental Solutions">
+  <!-- Placeholder wordmark. Replace this file with the official Axsys logo (same name) to rebrand. -->
+  <rect x="0" y="4" width="48" height="48" rx="12" fill="#1d5fbf"/>
+  <path d="M24 13 L37 43 H31.2 L28.6 36.6 H19.4 L16.8 43 H11 Z M21.2 31.8 H26.8 L24 24.6 Z" fill="#ffffff"/>
+  <text x="60" y="31" font-family="Segoe UI, Inter, Arial, sans-serif" font-size="25" font-weight="800" letter-spacing="3" fill="#ffffff">AXSYS</text>
+  <text x="61" y="48" font-family="Segoe UI, Inter, Arial, sans-serif" font-size="11.5" font-weight="600" letter-spacing="2.2" fill="#7fb0f0">DENTAL SOLUTIONS</text>
+</svg>

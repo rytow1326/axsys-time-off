@@ -1,0 +1,9 @@
+project_id = "axsys-time-off"
+
+# Edge function settings for `supabase functions deploy`
+[functions.notify]
+# Called by the database, authenticated with the x-notify-secret header instead of a user login
+verify_jwt = false
+
+[functions.admin-users]
+verify_jwt = true

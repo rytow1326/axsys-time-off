@@ -1,0 +1,61 @@
+{
+  "name": "axsys-time-off",
+  "productName": "Axsys Time Off",
+  "version": "1.0.0",
+  "description": "Axsys Dental Solutions — employee time-off requests",
+  "author": "Axsys Dental Solutions",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis --x64 --publish never",
+    "release": "electron-builder --win nsis --x64 --publish always",
+    "postinstall": "node scripts/vendor.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "electron-updater": "^6.6.2"
+  },
+  "devDependencies": {
+    "electron": "^38.0.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.axsysinc.timeoff",
+    "productName": "Axsys Time Off",
+    "copyright": "Copyright © Axsys Dental Solutions",
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico",
+      "artifactName": "Axsys-Time-Off-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Axsys Time Off",
+      "runAfterFinish": true
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "YOUR-GITHUB-ACCOUNT",
+        "repo": "axsys-time-off",
+        "releaseType": "release"
+      }
+    ]
+  }
+}
