@@ -121,9 +121,10 @@ jobs:
             fi
           done
 
-          echo "▶ Locking down sign-up (accounts are created by managers only)"
-          curl -fsS -X PATCH "${AUTH[@]}" "$API/config/auth" -d '{"disable_signup": true}' >/dev/null \
-            || echo "::warning::Couldn't turn off public sign-up automatically. Do it in Supabase → Authentication → Sign In / Providers."
+          echo "▶ Sign-up settings (only @axsysinc.com — enforced by the database; new accounts need manager approval)"
+          curl -fsS -X PATCH "${AUTH[@]}" "$API/config/auth" \
+            -d '{"disable_signup": false, "mailer_autoconfirm": true, "password_min_length": 10}' >/dev/null \
+            || fail "Couldn't update the sign-up settings. Check the access token has Auth config write permission."
 
           echo "▶ Deploying server functions"
           NOTIFY_SECRET=$(openssl rand -hex 32)
@@ -169,7 +170,7 @@ jobs:
               -H "Content-Type: application/json" -d "$body" >/dev/null || fail "Couldn't create the manager account"
             echo "  created $MANAGER_EMAIL"
           fi
-          q "update public.profiles set role = 'manager', active = true, full_name = '$(sqlq "$MANAGER_NAME")'
+          q "update public.profiles set role = 'manager', active = true, approved = true, full_name = '$(sqlq "$MANAGER_NAME")'
              where lower(email) = lower('$(sqlq "$MANAGER_EMAIL")');" >/dev/null
 
           # Hand the public settings to the next steps (the anon key is public by design)
@@ -201,10 +202,35 @@ jobs:
           printf 'window.AXSYS_CONFIG = {\n  SUPABASE_URL: "https://%s.supabase.co",\n  SUPABASE_ANON_KEY: "%s",\n};\n' "$R" "$ANON" > manager-portal/config.js
           grep -q 'supabase.co' manager-portal/config.js && grep -q 'SUPABASE_ANON_KEY: ".\{20,\}"' manager-portal/config.js \
             || { echo "::error::Portal settings came out empty"; exit 1; }
+      - name: Add the browser version of the employee app
+        # Same screens as the Windows app, served at <portal>/app/ — for PCs
+        # where installing programs isn't allowed. Employees can pin it from
+        # Edge/Chrome (⋯ → Apps → Install this site as an app).
+        run: |
+          mkdir -p site/app/vendor
+          cp -r manager-portal/. site/
+          cp -r employee-app/renderer/. site/app/
+          cp manager-portal/config.js site/app/config.js
+          cp employee-app/build/icon.png site/app/icon.png
+          curl -fsSL https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js -o site/app/vendor/supabase.js
+          cat > site/app/manifest.webmanifest <<'EOF'
+          {
+            "name": "Axsys Time Off",
+            "short_name": "Time Off",
+            "start_url": "./",
+            "scope": "./",
+            "display": "standalone",
+            "background_color": "#0b2447",
+            "theme_color": "#0b2447",
+            "icons": [{ "src": "icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }]
+          }
+          EOF
+          sed -i 's#<title>Axsys Time Off</title>#<title>Axsys Time Off</title>\n  <link rel="manifest" href="manifest.webmanifest">\n  <link rel="icon" href="icon.png">\n  <meta name="theme-color" content="\#0b2447">#' site/app/index.html
+          test -s site/app/vendor/supabase.js && grep -q manifest.webmanifest site/app/index.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: manager-portal
+          path: site
       - id: deployment
         uses: actions/deploy-pages@v4
 
@@ -239,6 +265,8 @@ jobs:
           $pkg = Get-Content package.json -Raw | ConvertFrom-Json
           $pkg.build.publish[0].owner = "${{ github.repository_owner }}"
           $pkg.build.publish[0].repo = "${{ github.event.repository.name }}"
+          # Every deploy gets a new version so installed apps update themselves
+          $pkg.version = "1.0.${{ github.run_number }}"
           $pkg | ConvertTo-Json -Depth 20 | Set-Content -Encoding utf8 package.json
           "VERSION=$($pkg.version)" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
 
@@ -272,6 +300,7 @@ jobs:
           |---|---|
           | **Manager portal** | ${{ needs.backend.outputs.portal_url }} |
           | **Employee installer** (send this link to staff) | https://github.com/${{ github.repository }}/releases/latest |
+          | **Employee app in the browser** (no install needed) | ${{ needs.backend.outputs.portal_url }}/app/ |
           | **Manager login** | ${{ inputs.manager_email }} (password = your MANAGER_PASSWORD secret) |
 
           Next: sign in to the portal → **Employees → Add employee** for each person.
