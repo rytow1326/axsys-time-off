@@ -134,8 +134,21 @@ jobs:
                    "EMAIL_FROM=${EMAIL_FROM:-Axsys Time Off <onboarding@resend.dev>}")
           [[ -n "${RESEND_API_KEY:-}" ]] && secrets+=("RESEND_API_KEY=$RESEND_API_KEY")
           supabase secrets set --project-ref "$SUPABASE_PROJECT_REF" "${secrets[@]}" >/dev/null
-          supabase functions deploy notify      --project-ref "$SUPABASE_PROJECT_REF" --use-api --no-verify-jwt
-          supabase functions deploy admin-users --project-ref "$SUPABASE_PROJECT_REF" --use-api
+          # Supabase's upload service occasionally returns a temporary 500 error, so retry,
+          # then fall back to packaging the function here (Docker) and uploading that.
+          deploy_fn() {
+            local name=$1; shift
+            for attempt in 1 2 3; do
+              supabase functions deploy "$name" --project-ref "$SUPABASE_PROJECT_REF" --use-api "$@" && return 0
+              echo "  upload of $name failed (attempt $attempt) — retrying in $((attempt * 10))s"
+              sleep $((attempt * 10))
+            done
+            echo "  trying the alternative upload method for $name"
+            supabase functions deploy "$name" --project-ref "$SUPABASE_PROJECT_REF" --use-docker "$@" && return 0
+            fail "Supabase couldn't accept the '$name' server function right now. This is on Supabase's side — wait a few minutes and click 'Re-run all jobs'."
+          }
+          deploy_fn notify --no-verify-jwt
+          deploy_fn admin-users
 
           if [[ -n "${RESEND_API_KEY:-}" ]]; then
             echo "▶ Turning on email notifications"
